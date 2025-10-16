@@ -214,10 +214,10 @@ class EncoderDecoderFactory(ModelFactory):
                 aux_decoder.decoder, channel_list, aux_decoder_kwargs, aux_head_kwargs, num_classes=num_classes
             )
             to_be_aux_decoders.append(
-                AuxiliaryHeadWithDecoderWithoutInstantiatedHead(aux_decoder.name, aux_decoder_instance, aux_head_kwargs)
+                AuxiliaryHeadWithDecoderWithoutInstantiatedHead(aux_decoder.name, aux_decoder_instance, aux_head_kwargs, aux_decoder_includes_head)
             )
             _check_all_args_used(args)
-
+            
         _check_all_args_used(kwargs)
 
         return _build_appropriate_model(
