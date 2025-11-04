@@ -41,7 +41,23 @@ class LossHandler:
                 If there are auxiliary heads, the main decode head is returned under the key "decode_head".
                 All other heads are returned with the same key as their name.
         """
-        
+        # Metric Learning Loss Handling
+        if hasattr(criterion, 'requires_embeddings') and criterion.requires_embeddings:
+            if "metric_learning_head" not in model_output.auxiliary_heads:
+                raise KeyError(
+                    "Loss criterion requires embeddings, but 'metric_learning_head' "
+                    "is missing from model output's auxiliary_heads."
+                )
+            
+            embeddings = model_output.auxiliary_heads['metric_learning_head']
+            logits = model_output.output
+            
+            # The criterion (e.g., JointLoss) is expected to handle both
+            # heads and return the complete loss dictionary.
+            loss_dict = criterion(embeddings, logits, ground_truth)
+            return loss_dict
+
+        # Standard Loss Handling
         loss = self._compute_loss(model_output.output, ground_truth, criterion)
         if isinstance(loss, Tensor):
             loss = {"loss": loss}

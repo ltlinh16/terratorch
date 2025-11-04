@@ -17,6 +17,7 @@ from torchmetrics.wrappers import ClasswiseWrapper
 from terratorch.models.model import ModelOutput
 from terratorch.tasks import ClassificationTask
 from terratorch.tasks.loss_handler import LossHandler, CombinedLoss
+from terratorch.tasks.metric_learning_loss import JointLoss
 
 
 # from geobench
@@ -35,8 +36,22 @@ def _balanced_binary_cross_entropy_with_logits(outputs: Tensor, targets: Tensor)
     return loss
 
 
-def init_loss(loss: str, ignore_index: int = None, class_weights: list = None) -> nn.Module:
-    if loss == "bce":
+def init_loss(
+    loss: str,
+    ignore_index: int = None,
+    custom_loss: bool = False,
+    custom_loss_kwargs: dict = None,
+    class_weights: list = None,
+) -> nn.Module:
+    if loss == "supcon":
+        if custom_loss and custom_loss_kwargs:
+            return JointLoss(**custom_loss_kwargs)
+        else:
+            return JointLoss()
+    elif custom_loss:
+        assert custom_loss_kwargs, "If you are using a custom loss, the `custom_loss_kwargs` are required."
+        return _instantiate_from_path(loss, **custom_loss_kwargs)
+    elif loss == "bce":
         return nn.BCEWithLogitsLoss()
     elif loss == "balanced_bce":
         return _balanced_binary_cross_entropy_with_logits
@@ -57,6 +72,8 @@ class MultiLabelClassificationTask(ClassificationTask):
     def configure_losses(self) -> None:
         loss = self.hparams["loss"]
         ignore_index = self.hparams["ignore_index"]
+        custom_loss = self.hparams["custom_loss"]
+        custom_loss_kwargs = self.hparams["custom_loss_kwargs"]
 
         class_weights = (
             torch.Tensor(self.hparams["class_weights"]) if self.hparams["class_weights"] is not None else None
@@ -64,24 +81,48 @@ class MultiLabelClassificationTask(ClassificationTask):
 
         if isinstance(loss, str):
             # Single loss
-            self.criterion = init_loss(loss, ignore_index=ignore_index, class_weights=class_weights)
+            self.criterion = init_loss(
+                loss,
+                ignore_index=ignore_index,
+                custom_loss=custom_loss,
+                custom_loss_kwargs=custom_loss_kwargs,
+                class_weights=class_weights,
+            )
         elif isinstance(loss, nn.Module):
             # Custom loss
             self.criterion = loss
         elif isinstance(loss, list):
             # List of losses with equal weights
-            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights)
-                      for loss in loss}
+            losses = {
+                loss: init_loss(
+                    loss,
+                    ignore_index=ignore_index,
+                    custom_loss=custom_loss,
+                    custom_loss_kwargs=custom_loss_kwargs,
+                    class_weights=class_weights,
+                )
+                for loss in loss
+            }
             self.criterion = CombinedLoss(losses=losses)
         elif isinstance(loss, dict):
             # Equal weighting of losses
             loss, weight = list(loss.keys()), list(loss.values())
-            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights)
-                      for loss in loss}
+            losses = {
+                loss: init_loss(
+                    loss,
+                    ignore_index=ignore_index,
+                    custom_loss=custom_loss,
+                    custom_loss_kwargs=custom_loss_kwargs,
+                    class_weights=class_weights,
+                )
+                for loss in loss
+            }
             self.criterion = CombinedLoss(losses=losses, weight=weight)
         else:
-            raise ValueError(f"The loss type {loss} isn't supported. Provide loss as string, list, or "
-                             f"dict[name, weights].")
+            raise ValueError(
+                f"The loss type {loss} isn't supported. Provide loss as string, list, or dict[name, weights]."
+            )
+
 
     def configure_metrics(self) -> None:
         """Initialize the performance metrics."""
@@ -103,6 +144,11 @@ class MultiLabelClassificationTask(ClassificationTask):
                     num_labels=num_classes,
                     ignore_index=ignore_index,
                     average="macro",
+                ),
+                "Multilabel_Average_Precision": MultilabelAveragePrecision(
+                    num_labels=num_classes,
+                    ignore_index=ignore_index,
+                    average='macro'
                 ),
                 "Multilabel_Recall": MultilabelRecall(
                     num_labels=num_classes,
