@@ -77,3 +77,32 @@ class GlobalAveragePoolMLPDecoder(nn.Module):
         if self.normalized_output:
             z = F.normalize(z, p=2, dim=1)
         return z
+
+
+
+@TERRATORCH_DECODER_REGISTRY.register
+class ProjectorHead(nn.Module):
+    """
+    Simple projector head for metric learning.
+    Takes the final feature  and projects it.
+    """
+    includes_head = True
+    def __init__(self, channel_list:list[int], out_dim: int = 128, normalized_output: bool = True, num_classes: Optional[int] = None) -> None:
+        super().__init__()
+
+        input_dim = channel_list[-1]
+        self.normalized_output = normalized_output
+        
+        self.projector = nn.Linear(input_dim, out_dim)
+        self.embed_dim = [input_dim] 
+        self.out_channels = out_dim
+
+
+    def forward(self, features: list[Tensor]) -> Tensor:
+        feature_to_project = features[-1] # [Batch_Size, 768]
+        
+        embeddings = self.projector(feature_to_project) # [Batch_Size, 128]
+        if self.normalized_output:
+            embeddings = F.normalize(embeddings, p=2, dim=1)
+        
+        return embeddings

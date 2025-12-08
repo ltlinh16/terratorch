@@ -113,8 +113,8 @@ class LossHandler:
             log_function(
                 f"{self.loss_prefix}{loss_name}",
                 loss_value,
-                on_epoch=True,
-                on_step=True,
+                #on_epoch=True,
+                #on_step=True,
                 sync_dist=True,
                 batch_size=batch_size,
             )
