@@ -92,16 +92,24 @@ class ProjectorHead(nn.Module):
 
         input_dim = channel_list[-1]
         self.normalized_output = normalized_output
-        
-        self.projector = nn.Linear(input_dim, out_dim)
-        self.embed_dim = [input_dim] 
         self.out_channels = out_dim
-
+        self.pool = nn.AdaptiveAvgPool2d(1)
+        
+        self.projector = nn.Sequential(
+            nn.Linear(input_dim, input_dim),
+            nn.ReLU(inplace=True),
+            nn.Linear(input_dim, out_dim)
+        )
 
     def forward(self, features: list[Tensor]) -> Tensor:
-        feature_to_project = features[-1] # [Batch_Size, 768]
+        x = features[-1] 
         
-        embeddings = self.projector(feature_to_project) # [Batch_Size, 128]
+        # If input is 4D (Spatial Grid: B, C, H, W), pool it to (B, C)
+        if x.dim() == 4:
+            x = self.pool(x).flatten(1)
+        
+        embeddings = self.projector(x) 
+        
         if self.normalized_output:
             embeddings = F.normalize(embeddings, p=2, dim=1)
         

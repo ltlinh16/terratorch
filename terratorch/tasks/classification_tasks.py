@@ -16,7 +16,7 @@ from terratorch.registry.registry import MODEL_FACTORY_REGISTRY
 from terratorch.tasks.base_task import TerraTorchTask
 from terratorch.tasks.loss_handler import CombinedLoss, LossHandler
 from terratorch.tasks.optimizer_factory import optimizer_factory
-from terratorch.tasks.metric_learning_loss import MultiClassJointLoss
+from terratorch.tasks.metric_learning_loss import JointLoss
 from terratorch.tasks.utils import _instantiate_from_path
 
 logger = logging.getLogger("terratorch")
@@ -34,11 +34,11 @@ def init_loss(
     custom_loss_kwargs: dict = None,
     class_weights: list = None,
 ) -> nn.Module:
-    if loss == "supcon":
+    if loss == "metric_learning":
         if custom_loss and custom_loss_kwargs:
-            return MultiClassJointLoss(**custom_loss_kwargs)
+            return JointLoss(**custom_loss_kwargs)
         else:
-            return MultiClassJointLoss()
+            return JointLoss()
     if custom_loss:
         assert custom_loss_kwargs, "If you are using a custom loss, the `custom_loss_kwargs` are required."
         return _instantiate_from_path(loss, **custom_loss_kwargs)

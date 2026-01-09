@@ -61,7 +61,6 @@ def _get_decoder_and_head_kwargs(
                 raise ValueError(msg)
         else:
             head_kwargs["num_classes"] = num_classes
-
     return DECODER_REGISTRY.build(decoder, channel_list, **decoder_kwargs), head_kwargs, decoder_includes_head
 
 
@@ -222,7 +221,7 @@ class EncoderDecoderFactory(ModelFactory):
                 aux_decoder_class , channel_list, aux_decoder_kwargs, aux_head_kwargs, num_classes=num_classes
             )
             to_be_aux_decoders.append(
-                AuxiliaryHeadWithDecoderWithoutInstantiatedHead(aux_decoder_name, aux_decoder_instance, aux_head_kwargs)
+                AuxiliaryHeadWithDecoderWithoutInstantiatedHead(aux_decoder_name, aux_decoder_instance, aux_head_kwargs, aux_decoder_includes_head)
             )
             _check_all_args_used(args)
 

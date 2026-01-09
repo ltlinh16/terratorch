@@ -17,7 +17,6 @@ from torchmetrics.wrappers import ClasswiseWrapper
 from terratorch.models.model import ModelOutput
 from terratorch.tasks import ClassificationTask
 from terratorch.tasks.loss_handler import LossHandler, CombinedLoss
-from terratorch.tasks.metric_learning_loss import JointLoss
 from terratorch.tasks.utils import _instantiate_from_path
 
 
@@ -44,12 +43,7 @@ def init_loss(
     custom_loss_kwargs: dict = None,
     class_weights: list = None,
 ) -> nn.Module:
-    if loss == "supcon":
-        if custom_loss and custom_loss_kwargs:
-            return JointLoss(**custom_loss_kwargs)
-        else:
-            return JointLoss()
-    elif custom_loss:
+    if custom_loss:
         assert custom_loss_kwargs, "If you are using a custom loss, the `custom_loss_kwargs` are required."
         return _instantiate_from_path(loss, **custom_loss_kwargs)
     elif loss == "bce":
