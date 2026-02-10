@@ -7,7 +7,7 @@ import torch.nn.functional as F
 class MetricLossBase(nn.Module, ABC):
     """
     Base class for all metric learning losses.
-    Always operates on a dict of embeddings.
+    Operates on a dict of embeddings.
     """
     requires_embeddings: bool = True
 
@@ -123,8 +123,8 @@ class NCALoss(MetricLossBase, LabelSimilarityMixin):
             semantic=self.semantic,
         )
 
-        sim.masked_fill_(mask, float("-inf"))
-        label_sim.masked_fill_(mask, 0.0)
+        sim = sim.masked_fill_(mask, float("-inf"))
+        label_sim = label_sim.masked_fill_(mask, 0.0)
 
         exp_sim = torch.exp(sim)
         num = (exp_sim * label_sim).sum(1) + self.eps

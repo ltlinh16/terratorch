@@ -43,7 +43,14 @@ class LossHandler:
         """
         # Metric Learning Loss Handling
         if hasattr(criterion, 'requires_embeddings') and criterion.requires_embeddings:
-            embeddings = model_output.auxiliary_heads
+            embeddings = {}
+            for key in model_output.auxiliary_heads.keys():
+                if "metric_learning" in key:
+                    embeddings[key] = model_output.auxiliary_heads[key]
+            if not embeddings:
+                raise KeyError(
+                    "Loss criterion requires embeddings, but no head consisting 'metric_learning' found"
+                )
             return criterion(embeddings, model_output.output, ground_truth)
 
         # Standard Loss Handling
