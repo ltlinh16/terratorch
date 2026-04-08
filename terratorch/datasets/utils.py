@@ -4,10 +4,14 @@ import os
 from collections.abc import Iterator, Sequence
 from enum import Enum
 from functools import partial
+from pathlib import Path
 from typing import Any
 
 import numpy as np
+import rasterio
 import torch
+import torch.nn.functional as F
+from sklearn.decomposition import PCA
 
 
 class HLSBands(Enum):
@@ -159,7 +163,7 @@ def to_tensor(d, transpose=True):
         if not isinstance(v, np.ndarray):
             new_dict[k] = v
         else:
-            if k == "image" and transpose:
+            if k == "image" and v.ndim > 2 and transpose:
                 v = np.moveaxis(v, -1, 0)
             new_dict[k] = torch.from_numpy(v)
     return new_dict
@@ -225,3 +229,108 @@ def clip_image_percentile(img: np.ndarray, q_lower: float = 1, q_upper: float = 
     img = np.clip(img, 0, 1)
 
     return img
+
+
+def to_rgb(
+    image_chw: np.ndarray,
+    rgb_indices: list[int],
+    p_low: float = 0.0,
+    p_high: float = 99.0,
+    gamma: float = 0.7,
+    eps: float = 1e-6,
+) -> np.ndarray:
+    """
+    Convert a channel-first image (C, H, W) to an RGB image for visualization.
+
+    Args:
+        image_chw: Input image in (C, H, W) format.
+        rgb_indices: Indices of channels to use as R, G, B.
+        p_low: Lower percentile for contrast stretching.
+        p_high: Upper percentile for contrast stretching.
+        gamma: Gamma correction applied after normalization.
+        eps: Small constant to avoid division by zero.
+
+    Returns:
+        RGB image in (H, W, 3) with values in [0, 1].
+    """
+
+    img = image_chw.take(rgb_indices, axis=0)
+    img = np.transpose(img, (1, 2, 0))
+    lo = np.percentile(img, p_low, axis=(0, 1), keepdims=True)
+    hi = np.percentile(img, p_high, axis=(0, 1), keepdims=True)
+
+    img = (img - lo) / (hi - lo + eps)
+
+    if gamma is not None:
+        img = np.power(img, gamma)
+
+    return np.clip(img, 0, 1)
+
+
+def to_pca_rgb(image_chw: np.ndarray, step: int = 4) -> np.ndarray:
+    """Convert channel-first embedding (C, H, W) to a 3-channel PCA visualization.
+
+    Args:
+        image_chw: Spatial embeddings in (C, H, W) format.
+        step (int): Spatial subsampling factor for PCA fitting in embedding visualizations.
+            PCA components are estimated using only every pca_step-th spatial embedding
+            (e.g. pca_step=4 uses 1/4 of embeddings), then applied to all embeddings. Defaults to 4.
+    """
+    if image_chw.ndim != 3:
+        raise ValueError(f"Unsupported embedding shape {tuple(image_chw.shape)}")
+
+    C, H, W = image_chw.shape
+    emb_flat = image_chw.reshape(C, -1).T
+
+    emb_fit = emb_flat[::step].astype(np.float32, copy=True)
+    mean = emb_fit.mean(axis=0, keepdims=True)
+    emb_fit -= mean
+
+    pca = PCA(n_components=3, svd_solver="randomized", random_state=0)
+    pca.fit(emb_fit)
+
+    proj = pca.transform(emb_flat.astype(np.float32, copy=False) - mean)
+
+    min = proj.min(axis=0, keepdims=True)
+    max = proj.max(axis=0, keepdims=True)
+    proj = (proj - min) / np.maximum(max - min, 1e-8)
+
+    return proj.reshape(H, W, 3), H, W
+
+
+def resize_hwc(img_hwc: np.ndarray, size_hw: tuple[int, int]) -> np.ndarray:
+    """Resize an image in (H, W, C) format to a target spatial size."""
+    target_h, target_w = size_hw
+
+    img_chw = np.transpose(img_hwc, (2, 0, 1))
+    img_tensor = torch.from_numpy(img_chw).unsqueeze(0).float()
+
+    img_resized = F.interpolate(
+        img_tensor,
+        size=(target_h, target_w),
+        mode="bilinear",
+        align_corners=False,
+    )
+
+    return img_resized.squeeze(0).permute(1, 2, 0).numpy()  # (H, W, C)
+
+
+def extract_georeference(path: Path) -> dict[str, Any] | None:
+    """
+    Returns georeference needed to align rasters for embedding generation in a collate-friendly format.
+    """
+    try:
+        with rasterio.open(path) as ds:
+            if ds.crs is None or ds.transform is None:
+                return None
+
+            t = ds.transform
+            left, bottom, right, top = ds.bounds
+            return {
+                "crs": ds.crs.to_string(),
+                "geotransform": np.array([t.c, t.a, t.b, t.f, t.d, t.e], dtype=np.float32),
+                "raster_shape": np.array([int(ds.height), int(ds.width)], dtype=np.float32),
+                "bounds": np.array([left, bottom, right, top], dtype=np.float32),
+            }
+    except Exception:
+        return None

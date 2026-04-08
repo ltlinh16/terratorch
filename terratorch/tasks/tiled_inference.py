@@ -5,12 +5,14 @@ e.g. cropping out areas around model prediction to reduce artifacts
 It additionally rebatches after the fold operation to gain speed up.
 """
 
-import torch
-import tqdm
 import math
 import warnings
 from collections.abc import Callable
 from dataclasses import dataclass
+
+import torch
+import tqdm
+
 from terratorch.models.utils import pad_images
 
 
@@ -127,7 +129,7 @@ def get_input_chips(
             InferenceInput(
                 b,
                 (slice(i + delta, i + h_crop - delta), slice(w_img - w_crop + delta, w_img - delta))
-                if padding 
+                if padding
                 else (slice(i, i + h_crop), slice(w_img - w_crop, w_img)),
                 patch[b],
                 border_blend_mask,
@@ -142,8 +144,8 @@ def get_input_chips(
         coordinates_and_inputs += [
             InferenceInput(
                 b,
-                (slice(h_img - h_crop + delta, h_img - delta), slice(i + delta, i + w_crop - delta)) 
-                if padding 
+                (slice(h_img - h_crop + delta, h_img - delta), slice(i + delta, i + w_crop - delta))
+                if padding
                 else (slice(h_img - h_crop, h_img), slice(i, i + w_crop)),
                 patch[b],
                 border_blend_mask,
@@ -157,8 +159,8 @@ def get_input_chips(
     coordinates_and_inputs += [
         InferenceInput(
             b,
-            (slice(h_img - h_crop + delta, h_img - delta), slice(w_img - w_crop + delta, w_img - delta)) 
-            if padding 
+            (slice(h_img - h_crop + delta, h_img - delta), slice(w_img - w_crop + delta, w_img - delta))
+            if padding
             else (slice(h_img - h_crop, h_img), slice(w_img - w_crop, w_img)),
             patch[b],
             border_blend_mask,
@@ -176,7 +178,7 @@ def get_input_chips(
                     InferenceInput(
                         b,
                         (slice(row + delta, row + h_crop - delta), slice(col + delta, col + w_crop - delta))
-                        if padding 
+                        if padding
                         else (slice(row, row + h_crop), slice(col, col + w_crop)),
                         patch[b],
                         border_blend_mask,
@@ -200,11 +202,182 @@ def get_input_chips(
     return coordinates_and_inputs
 
 
+def prepare_tiled_inference_input(
+    input_batch: torch.Tensor,
+    out_channels: int | None = None,
+    inference_parameters: TiledInferenceParameters | None = None,
+    crop: int = 224,
+    stride: int = 192,
+    delta: int = 8,
+    blend_overlaps: bool = True,
+    h_crop: int | None = None,
+    w_crop: int | None = None,
+    h_stride: int | None = None,
+    w_stride: int | None = None,
+    padding: str | bool = "reflect",
+    device: str | None = None,
+) -> tuple[list[InferenceInput], Callable[[torch.Tensor], dict | torch.Tensor], int, int, int, str | torch.device]:
+
+    if inference_parameters is not None:
+        # TODO: Remove inference_parameters in later version 1.3.
+        warnings.warn(
+            "Using inference_parameters and ignoring other parameters."
+            "The parameter `inference_parameters` is deprecated and is removed in version 1.3, "
+            "please pass the parameters directly to `tiled_inference`. ",
+            DeprecationWarning,
+        )
+        h_crop = inference_parameters.h_crop
+        h_stride = inference_parameters.h_stride
+        w_crop = inference_parameters.w_crop
+        w_stride = inference_parameters.w_stride
+        delta = inference_parameters.delta
+        blend_overlaps = inference_parameters.blend_overlaps
+
+    if isinstance(input_batch, dict):
+        # Handle dict inputs for tiled inference
+        modalities, tensors = list(input_batch.keys()), list(input_batch.values())
+
+        # Check that all values in dict are tensors and have a same image shape
+        if not all(isinstance(t, torch.Tensor) for t in tensors):
+            raise ValueError("input for tiled inference must be either a torch.Tensor or a dict of torch.Tensors")
+        img_shapes = [t.shape[-2:] for t in tensors]
+        if len(set(img_shapes)) != 1:
+            raise ValueError(
+                f"Tensors in input dict must have the same height and width for tiled inference, "
+                f"found {dict(zip(modalities, img_shapes))}"
+            )
+        t_dims = [len(t.shape) for t in tensors]
+        if len(set(t_dims)) != 1:
+            raise ValueError(
+                f"Tensors in input dict must have the same number of dimensions for tiled inference, "
+                f"found {dict(zip(modalities, t_dims, strict=False))}"
+            )
+
+        # Tiled inference is implemented for single tensors.
+        # We concatenate all tensors and reshape them before the model forward
+        t_dims = t_dims[0]
+        if t_dims == 4:  # B, C, H, W
+            channel_length = [t.shape[-3] for t in tensors]
+            channel_start = torch.tensor([0] + channel_length).cumsum(0)
+            input_batch = torch.concat(tensors, dim=-3)
+        elif t_dims == 5:  # B, C, T, H, W
+            channel_length = [t.shape[-4] for t in tensors]
+            channel_start = torch.tensor([0] + channel_length).cumsum(0)
+            input_batch = torch.concat(tensors, dim=-4)
+        else:
+            raise ValueError("Tensors must have 4 or 5 dimensions")
+
+        def tensor_reshape(t):
+            # Convert tensor back to dict of tensors
+            if t_dims == 4:  # B, C, H, W
+                out = {m: t[..., s : s + l, :, :] for m, s, l in zip(modalities, channel_start, channel_length)}
+            elif t_dims == 5:  # B, C, T, H, W
+                out = {m: t[..., s : s + l, :, :, :] for m, s, l in zip(modalities, channel_start, channel_length)}
+            return out
+
+    elif isinstance(input_batch, torch.Tensor):
+        # Dummy function if input is a tensor
+        tensor_reshape = lambda x: x
+    else:
+        raise ValueError("input for tiled inference must be either a torch.Tensor or a dict of torch.Tensors")
+
+    input_batch_size = input_batch.shape[0]
+    h_img, w_img = input_batch.shape[-2:]
+    ret_device = device or input_batch.device
+
+    # Move inputs to CPU to avoid out-of-memory errors
+    input_batch = input_batch.cpu()
+
+    h_crop = h_crop or crop
+    w_crop = w_crop or crop
+    h_stride = h_stride or stride
+    w_stride = w_stride or stride
+
+    if (h_crop - h_stride) // 2 < delta or (w_crop - w_stride) // 2 < delta:
+        # Ensure that every pixel is covered
+        delta = min((h_crop - h_stride) // 2, (w_crop - w_stride) // 2)
+        warnings.warn(f"Tiled inference: delta is higher than overlap, reducing delta to {delta}.")
+
+    if out_channels is not None:
+        warnings.warn(
+            "out_channels is deprecated and automatically selected after first forward pass.", DeprecationWarning
+        )
+
+    # Get smaller inputs
+    coordinates_and_inputs = get_input_chips(
+        input_batch, h_crop, h_stride, w_crop, w_stride, delta, blend_overlaps, padding
+    )
+
+    return coordinates_and_inputs, tensor_reshape, input_batch_size, h_img, w_img, ret_device, delta
+
+
+def generate_tiled_inference_output(
+    outputs,
+    input_batch_size: int,
+    h_img: int,
+    w_img: int,
+    delta: int,
+    padding: str | bool = "reflect",
+    average_patches: bool = True,
+) -> torch.Tensor:
+    preds: torch.Tensor | None = None
+    preds_count: torch.Tensor | None = None
+
+    for batch_input, predicted in outputs:
+        if preds is None:
+            # Initialize preds based on first output
+            out_channels = 1 if len(predicted.shape) == 2 else predicted.shape[0]
+            if padding:
+                # Add padding areas to align with input indexes
+                preds = torch.zeros((input_batch_size, out_channels, h_img + (2 * delta), w_img + (2 * delta)))
+                preds_count = torch.zeros(input_batch_size, h_img + (2 * delta), w_img + (2 * delta))
+            else:
+                preds = torch.zeros((input_batch_size, out_channels, h_img, w_img))
+                preds_count = torch.zeros(input_batch_size, h_img, w_img)
+        if batch_input.output_crop is not None:
+            predicted = predicted[..., batch_input.output_crop[0], batch_input.output_crop[1]]
+        if average_patches:
+            preds[
+                batch_input.batch,
+                :,
+                batch_input.input_coords[0],
+                batch_input.input_coords[1],
+            ] += predicted * batch_input.blend_mask
+        else:
+            preds[
+                batch_input.batch,
+                :,
+                batch_input.input_coords[0],
+                batch_input.input_coords[1],
+            ] = predicted
+
+        preds_count[
+            batch_input.batch,
+            batch_input.input_coords[0],
+            batch_input.input_coords[1],
+        ] += batch_input.blend_mask
+
+    if padding:
+        # Remove padded areas
+        preds = preds[..., delta:-delta, delta:-delta]
+        preds_count = preds_count[..., delta:-delta, delta:-delta]
+    if (preds_count == 0).sum() != 0:
+        msg = "Some pixels did not receive a classification!"
+        raise RuntimeError(msg)
+
+    output = preds
+
+    if average_patches:
+        output = output / preds_count.unsqueeze(1)
+
+    return output
+
+
 def tiled_inference(
     model_forward: Callable,
     input_batch: torch.Tensor,
     out_channels: int | None = None,
-    inference_parameters: TiledInferenceParameters = None,
+    inference_parameters: TiledInferenceParameters | None = None,
     crop: int = 224,
     stride: int = 192,
     delta: int = 8,
@@ -217,6 +390,7 @@ def tiled_inference(
     batch_size: int = 16,
     verbose: bool = False,
     padding: str | bool = "reflect",
+    device: str | None = None,
     **kwargs,
 ) -> torch.Tensor:
     """
@@ -245,101 +419,25 @@ def tiled_inference(
         torch.Tensor: The result of the inference
     """
 
-    if inference_parameters is not None:
-        # TODO: Remove inference_parameters in later version 1.3.
-        warnings.warn(
-            "Using inference_parameters and ignoring other parameters."
-            "The parameter `inference_parameters` is deprecated and is removed in version 1.3, "
-            "please pass the parameters directly to `tiled_inference`. ",
-            DeprecationWarning,
+    coordinates_and_inputs, tensor_reshape, input_batch_size, h_img, w_img, device, delta = (
+        prepare_tiled_inference_input(
+            input_batch=input_batch,
+            out_channels=out_channels,
+            inference_parameters=inference_parameters,
+            crop=crop,
+            stride=stride,
+            delta=delta,
+            h_crop=h_crop,
+            w_crop=w_crop,
+            h_stride=h_stride,
+            w_stride=w_stride,
+            blend_overlaps=blend_overlaps,
+            padding=padding,
+            device=device,
         )
-        h_crop = inference_parameters.h_crop
-        h_stride = inference_parameters.h_stride
-        w_crop = inference_parameters.w_crop
-        w_stride = inference_parameters.w_stride
-        delta = inference_parameters.delta
-        average_patches = inference_parameters.average_patches
-        blend_overlaps = inference_parameters.blend_overlaps
-        verbose = inference_parameters.verbose
-
-    if isinstance(input_batch, dict):
-        # Handle dict inputs for tiled inference
-        modalities, tensors = list(input_batch.keys()), list(input_batch.values())
-
-        # Check that all values in dict are tensors and have a same image shape
-        if not all(isinstance(t, torch.Tensor) for t in tensors):
-            raise ValueError("input for tiled inference must be either a torch.Tensor or a dict of torch.Tensors")
-        img_shapes = [t.shape[-2:] for t in tensors]
-        if len(set(img_shapes)) != 1:
-            raise ValueError(
-                f"Tensors in input dict must have the same height and width for tiled inference, "
-                f"found {dict(zip(modalities, img_shapes))}"
-            )
-        t_dims = [len(t.shape) for t in tensors]
-        if len(set(t_dims)) != 1:
-            raise ValueError(
-                f"Tensors in input dict must have the same number of dimensions for tiled inference, "
-                f"found {dict(zip(modalities, t_dims, strict=False))}"
-            )
-
-        # Tiled inference is implemented for single tensors.
-        # We concatenate all tensors and reshape them before the model forward
-        t_dims = t_dims[0]
-        if t_dims == 4: # B, C, H, W
-            channel_length = [t.shape[-3] for t in tensors]
-            channel_start = torch.tensor([0] + channel_length).cumsum(0)
-            input_batch = torch.concat(tensors, dim=-3)
-        elif t_dims == 5:# B, C, T, H, W
-            channel_length = [t.shape[-4] for t in tensors]
-            channel_start = torch.tensor([0] + channel_length).cumsum(0)
-            input_batch = torch.concat(tensors, dim=-4)
-        else:
-            raise ValueError(f"Tensors must have 4 or 5 dimensions")
-
-
-        def tensor_reshape(t):
-            # Convert tensor back to dict of tensors
-            if t_dims == 4: # B, C, H, W
-                out = {m: t[..., s:s+l, :, :] for m, s, l in zip(modalities, channel_start, channel_length)}
-            elif t_dims == 5:# B, C, T, H, W
-                out = {m: t[..., s:s+l, :, :, :] for m, s, l in zip(modalities, channel_start, channel_length)}
-            return out
-
-    elif isinstance(input_batch, torch.Tensor):
-        # Dummy function if input is a tensor
-        tensor_reshape = lambda x: x
-    else:
-        raise ValueError("input for tiled inference must be either a torch.Tensor or a dict of torch.Tensors")
-
-    device = input_batch.device
-
-    # Move inputs to CPU to avoid out-of-memory errors
-    input_batch = input_batch.cpu()
-
-    input_batch_size = input_batch.shape[0]
-    h_img, w_img = input_batch.shape[-2:]
-
-    h_crop = h_crop or crop
-    w_crop = w_crop or crop
-    h_stride = h_stride or stride
-    w_stride = w_stride or stride
-
-    if (h_crop - h_stride) // 2 < delta or (w_crop - w_stride) // 2 < delta:
-        # Ensure that every pixel is covered
-        delta = min((h_crop - h_stride) // 2, (w_crop - w_stride) // 2)
-        warnings.warn(f"Tiled inference: delta is higher than overlap, reducing delta to {delta}.")
-
-    if out_channels is not None:
-        warnings.warn(
-            "out_channels is deprecated and automatically selected after first forward pass.", DeprecationWarning
-        )
-    preds = None  # Preds is initialized after the first forward pass
-
-    # Get smaller inputs
-    coordinates_and_inputs = get_input_chips(
-        input_batch, h_crop, h_stride, w_crop, w_stride, delta, blend_overlaps, padding
     )
 
+    outputs: list[tuple[InferenceInput, torch.Tensor]] = []
     # NOTE: the output may be SLIGHTLY different using batched inputs because of layers such as nn.LayerNorm
     # During inference, these layers compute batch statistics that affect the output.
     # However, this should still be correct.
@@ -354,52 +452,17 @@ def tiled_inference(
             tensor_input = tensor_reshape(tensor_input)  # Optional reshaping for inputs other than plain tensors
             output = model_forward(tensor_input, **kwargs).cpu()
             output = [output[i] for i in range(len(batch))]
-            for batch_input, predicted in zip(batch, output, strict=True):
-                if preds is None:
-                    # Initialize preds based on first output
-                    out_channels = 1 if len(predicted.shape) == 2 else predicted.shape[0]
-                    if padding:
-                        # Add padding areas to align with input indexes
-                        preds = input_batch.new_zeros(
-                            (input_batch_size, out_channels, h_img + (2 * delta), w_img + (2 * delta))
-                        )
-                        preds_count = input_batch.new_zeros(input_batch_size, h_img + (2 * delta), w_img + (2 * delta))
-                    else:
-                        preds = input_batch.new_zeros((input_batch_size, out_channels, h_img, w_img))
-                        preds_count = input_batch.new_zeros(input_batch_size, h_img, w_img)
-                if batch_input.output_crop is not None:
-                    predicted = predicted[..., batch_input.output_crop[0], batch_input.output_crop[1]]
-                if average_patches:
-                    preds[
-                        batch_input.batch,
-                        :,
-                        batch_input.input_coords[0],
-                        batch_input.input_coords[1],
-                    ] += predicted * batch_input.blend_mask
-                else:
-                    preds[
-                        batch_input.batch,
-                        :,
-                        batch_input.input_coords[0],
-                        batch_input.input_coords[1],
-                    ] = predicted
 
-                preds_count[
-                    batch_input.batch,
-                    batch_input.input_coords[0],
-                    batch_input.input_coords[1],
-                ] += batch_input.blend_mask
+            outputs.extend(list(zip(batch, output, strict=True)))
 
-    if padding:
-        # Remove padded areas
-        preds = preds[..., delta:-delta, delta:-delta]
-        preds_count = preds_count[..., delta:-delta, delta:-delta]
-    if (preds_count == 0).sum() != 0:
-        msg = "Some pixels did not receive a classification!"
-        raise RuntimeError(msg)
-    if average_patches:
-        output = preds / preds_count.unsqueeze(1)
-        output = output.to(device)
-        return output
-    output = preds.to(device)
-    return output
+    output = generate_tiled_inference_output(
+        outputs=outputs,
+        input_batch_size=input_batch_size,
+        h_img=h_img,
+        w_img=w_img,
+        delta=delta,
+        padding=padding,
+        average_patches=average_patches,
+    )
+
+    return output.to(device)

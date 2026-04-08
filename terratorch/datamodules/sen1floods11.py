@@ -5,10 +5,10 @@ from typing import Any
 
 import albumentations as A
 import kornia.augmentation as K  # noqa: N812
+from kornia.augmentation import AugmentationSequential
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torchgeo.datamodules import NonGeoDataModule
-from kornia.augmentation import AugmentationSequential
 
 from terratorch.datamodules.utils import wrap_in_compose_is_list
 from terratorch.datasets import Sen1Floods11NonGeo
@@ -45,6 +45,7 @@ STDS = {
     "SWIR_2": 0.07659938,
 }
 
+
 class Sen1Floods11NonGeoDataModule(NonGeoDataModule):
     """NonGeo LightningDataModule implementation for Fire Scars."""
 
@@ -54,10 +55,10 @@ class Sen1Floods11NonGeoDataModule(NonGeoDataModule):
         batch_size: int = 4,
         num_workers: int = 0,
         bands: Sequence[str] = Sen1Floods11NonGeo.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         drop_last: bool = True,
         constant_scale: float = 0.0001,
         no_data_replace: float | None = 0,
@@ -73,10 +74,10 @@ class Sen1Floods11NonGeoDataModule(NonGeoDataModule):
             batch_size (int, optional): Batch size for DataLoaders. Defaults to 4.
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             bands (Sequence[str], optional): List of bands to use. Defaults to Sen1Floods11NonGeo.all_band_names.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training data.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation data.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for test data.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction data.
+            train_transform (A.Compose | None | list, optional): Transformations for training data.
+            val_transform (A.Compose | None | list, optional): Transformations for validation data.
+            test_transform (A.Compose | None | list, optional): Transformations for test data.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction data.
             drop_last (bool, optional): Whether to drop the last incomplete batch. Defaults to True.
             constant_scale (float, optional): Scale constant applied to the dataset. Defaults to 0.0001.
             no_data_replace (float | None, optional): Replacement value for missing data. Defaults to 0.

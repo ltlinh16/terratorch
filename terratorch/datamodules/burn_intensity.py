@@ -2,10 +2,10 @@ from collections.abc import Sequence
 from typing import Any
 
 import albumentations as A
-
-from terratorch.datamodules.utils import NormalizeWithTimesteps, wrap_in_compose_is_list
-from terratorch.datasets import BurnIntensityNonGeo
 from torchgeo.datamodules import NonGeoDataModule
+
+from terratorch.datamodules.utils import Normalize, wrap_in_compose_is_list
+from terratorch.datasets import BurnIntensityNonGeo
 
 MEANS = {
     "BLUE": [331.6921, 896.8024, 348.8031],
@@ -25,6 +25,7 @@ STDS = {
     "SWIR_2": [612.9131, 1495.8365, 661.6196],
 }
 
+
 class BurnIntensityNonGeoDataModule(NonGeoDataModule):
     """NonGeo LightningDataModule implementation for BurnIntensity datamodule."""
 
@@ -34,10 +35,10 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
         batch_size: int = 4,
         num_workers: int = 0,
         bands: Sequence[str] = BurnIntensityNonGeo.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         use_full_data: bool = True,
         no_data_replace: float | None = 0.0001,
         no_label_replace: int | None = -1,
@@ -52,10 +53,10 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
             batch_size (int, optional): Batch size for DataLoaders. Defaults to 4.
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             bands (Sequence[str], optional): List of bands to use. Defaults to BurnIntensityNonGeo.all_band_names.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction.
+            train_transform (A.Compose | None | list, optional): Transformations for training.
+            val_transform (A.Compose | None | list, optional): Transformations for validation.
+            test_transform (A.Compose | None | list, optional): Transformations for testing.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction.
             use_full_data (bool, optional): Whether to use the full dataset or data with less than 25 percent zeros. Defaults to True.
             no_data_replace (float | None, optional): Value to replace missing data. Defaults to 0.0001.
             no_label_replace (int | None, optional): Value to replace missing labels. Defaults to -1.
@@ -72,7 +73,7 @@ class BurnIntensityNonGeoDataModule(NonGeoDataModule):
         self.val_transform = wrap_in_compose_is_list(val_transform)
         self.test_transform = wrap_in_compose_is_list(test_transform)
         self.predict_transform = wrap_in_compose_is_list(predict_transform)
-        self.aug = NormalizeWithTimesteps(means, stds)
+        self.aug = Normalize(means, stds)
         self.use_full_data = use_full_data
         self.no_data_replace = no_data_replace
         self.no_label_replace = no_label_replace

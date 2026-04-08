@@ -3,30 +3,16 @@ from typing import Any
 
 import albumentations as A
 import kornia.augmentation as K  # noqa: N812
-
-from terratorch.datamodules.generic_pixel_wise_data_module import Normalize
-from terratorch.datamodules.generic_multimodal_data_module import wrap_in_compose_is_list
-from terratorch.datasets import ForestNetNonGeo
-from torchgeo.datamodules import NonGeoDataModule
 from kornia.augmentation import AugmentationSequential
+from torchgeo.datamodules import NonGeoDataModule
 
-MEANS = {
-    "BLUE": 19.8680,
-    "GREEN": 28.1656,
-    "RED": 14.9309,
-    "NIR": 82.1076,
-    "SWIR_1": 39.4819,
-    "SWIR_2": 17.7241
-}
+from terratorch.datamodules.generic_multimodal_data_module import wrap_in_compose_is_list
+from terratorch.datamodules.generic_pixel_wise_data_module import Normalize
+from terratorch.datasets import ForestNetNonGeo
 
-STDS = {
-    "BLUE": 17.4523,
-    "GREEN": 15.8399,
-    "RED": 17.9444,
-    "NIR": 21.4439,
-    "SWIR_1": 14.4642,
-    "SWIR_2": 9.9120
-}
+MEANS = {"BLUE": 19.8680, "GREEN": 28.1656, "RED": 14.9309, "NIR": 82.1076, "SWIR_1": 39.4819, "SWIR_2": 17.7241}
+
+STDS = {"BLUE": 17.4523, "GREEN": 15.8399, "RED": 17.9444, "NIR": 21.4439, "SWIR_1": 14.4642, "SWIR_2": 9.9120}
 
 
 class ForestNetNonGeoDataModule(NonGeoDataModule):
@@ -39,10 +25,10 @@ class ForestNetNonGeoDataModule(NonGeoDataModule):
         num_workers: int = 0,
         label_map: dict[str, int] = ForestNetNonGeo.default_label_map,
         bands: Sequence[str] = ForestNetNonGeo.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         fraction: float = 1.0,
         aug: AugmentationSequential = None,
         use_metadata: bool = False,
@@ -57,10 +43,10 @@ class ForestNetNonGeoDataModule(NonGeoDataModule):
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             label_map (dict[str, int], optional): Mapping of labels to integers. Defaults to ForestNetNonGeo.default_label_map.
             bands (Sequence[str], optional): List of band names to use. Defaults to ForestNetNonGeo.all_band_names.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training data.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation data.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing data.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction.
+            train_transform (A.Compose | None | list, optional): Transformations for training data.
+            val_transform (A.Compose | None | list, optional): Transformations for validation data.
+            test_transform (A.Compose | None | list, optional): Transformations for testing data.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction.
             fraction (float, optional): Fraction of data to use. Defaults to 1.0.
             aug (AugmentationSequential, optional): Augmentation/normalization pipeline; if None, uses Normalize.
             use_metadata (bool): Whether to return metadata info.

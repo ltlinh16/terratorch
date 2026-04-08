@@ -6,11 +6,11 @@ from typing import Any
 
 import albumentations as A
 import kornia.augmentation as K  # noqa: N812
+from kornia.augmentation import AugmentationSequential
 from torch import Tensor
 from torch.utils.data import DataLoader
 from torchgeo.datamodules import GeoDataModule, NonGeoDataModule
 from torchgeo.samplers import GridGeoSampler, RandomBatchGeoSampler
-from kornia.augmentation import AugmentationSequential
 
 from terratorch.datamodules.utils import wrap_in_compose_is_list
 from terratorch.datasets import FireScarsHLS, FireScarsNonGeo, FireScarsSegmentationMask
@@ -43,10 +43,10 @@ class FireScarsNonGeoDataModule(NonGeoDataModule):
         batch_size: int = 4,
         num_workers: int = 0,
         bands: Sequence[str] = FireScarsNonGeo.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         drop_last: bool = True,
         no_data_replace: float | None = 0,
         no_label_replace: int | None = -1,
@@ -61,10 +61,10 @@ class FireScarsNonGeoDataModule(NonGeoDataModule):
             batch_size (int, optional): Batch size for DataLoaders. Defaults to 4.
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             bands (Sequence[str], optional): List of band names. Defaults to FireScarsNonGeo.all_band_names.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction.
+            train_transform (A.Compose | None | list, optional): Transformations for training.
+            val_transform (A.Compose | None | list, optional): Transformations for validation.
+            test_transform (A.Compose | None | list, optional): Transformations for testing.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction.
             drop_last (bool, optional): Whether to drop the last incomplete batch. Defaults to True.
             no_data_replace (float | None, optional): Replacement value for missing data. Defaults to 0.
             no_label_replace (int | None, optional): Replacement value for missing labels. Defaults to -1.
@@ -171,21 +171,13 @@ class FireScarsDataModule(GeoDataModule):
         self.data_root = data_root
 
     def setup(self, stage: str) -> None:
-        self.images = FireScarsHLS(
-            os.path.join(self.data_root, "training/")
-        )
-        self.labels = FireScarsSegmentationMask(
-            os.path.join(self.data_root, "training/")
-        )
+        self.images = FireScarsHLS(os.path.join(self.data_root, "training/"))
+        self.labels = FireScarsSegmentationMask(os.path.join(self.data_root, "training/"))
         self.dataset = self.images & self.labels
         self.train_aug = AugmentationSequential(K.RandomCrop(224, 224), K.normalize(), data_keys=None)
 
-        self.images_test = FireScarsHLS(
-            os.path.join(self.data_root, "validation/")
-        )
-        self.labels_test = FireScarsSegmentationMask(
-            os.path.join(self.data_root, "validation/")
-        )
+        self.images_test = FireScarsHLS(os.path.join(self.data_root, "validation/"))
+        self.labels_test = FireScarsSegmentationMask(os.path.join(self.data_root, "validation/"))
         self.val_dataset = self.images_test & self.labels_test
 
         if stage in ["fit"]:

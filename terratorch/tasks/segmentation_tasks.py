@@ -1,14 +1,11 @@
 import logging
-import os
 import warnings
 from functools import partial
 from typing import Any
 
-import lightning
 import matplotlib.pyplot as plt
 import segmentation_models_pytorch as smp
 import torch
-from lightning.pytorch.callbacks import Callback
 from torch import Tensor, nn
 from torchgeo.datasets.utils import unbind_samples
 from torchmetrics import ClasswiseWrapper, MetricCollection
@@ -17,9 +14,9 @@ from torchmetrics.classification import MulticlassAccuracy, MulticlassF1Score, M
 from terratorch.models.model import AuxiliaryHead, ModelOutput
 from terratorch.registry import MODEL_FACTORY_REGISTRY
 from terratorch.tasks.base_task import TerraTorchTask
-from terratorch.tasks.loss_handler import LossHandler
-from terratorch.tasks.optimizer_factory import optimizer_factory
-from terratorch.tasks.tiled_inference import TiledInferenceParameters, tiled_inference
+from terratorch.tasks.loss_handler import CombinedLoss, LossHandler
+from terratorch.tasks.metrics import BoundaryMeanIoU
+from terratorch.tasks.tiled_inference import tiled_inference
 
 BATCH_IDX_FOR_VALIDATION_PLOTTING = 10
 
@@ -29,6 +26,27 @@ logger = logging.getLogger("terratorch")
 def to_segmentation_prediction(y: ModelOutput) -> Tensor:
     y_hat = y.output
     return y_hat.argmax(dim=1)
+
+
+def init_loss(loss: str, ignore_index: int = None, class_weights: list = None) -> nn.Module:
+    if loss == "ce":
+        return nn.CrossEntropyLoss(ignore_index=ignore_index, weight=class_weights)
+    elif loss == "jaccard":
+        if ignore_index is not None:
+            raise RuntimeError(
+                f"Jaccard loss does not support ignore_index, but found non-None value of {ignore_index}."
+            )
+        return smp.losses.JaccardLoss(mode="multiclass")
+    elif loss == "focal":
+        return smp.losses.FocalLoss("multiclass", ignore_index=ignore_index, normalized=True)
+    elif loss == "dice":
+        return smp.losses.DiceLoss("multiclass", ignore_index=ignore_index)
+    elif loss == "lovasz":
+        return smp.losses.LovaszLoss(mode="multiclass", ignore_index=ignore_index)
+    else:
+        raise ValueError(
+            f"Loss type '{loss}' is not valid. Currently, supports 'ce', 'jaccard', 'dice', 'focal', or 'lovasz' loss."
+        )
 
 
 class SemanticSegmentationTask(TerraTorchTask):
@@ -45,44 +63,43 @@ class SemanticSegmentationTask(TerraTorchTask):
 
     def __init__(
         self,
-        model_args: dict,
+        model_args: dict | None = None,
         model_factory: str | None = None,
         model: torch.nn.Module | None = None,
-        loss: str = "ce",
-        aux_heads: list[AuxiliaryHead] | None = None,
+        loss: str | list[str] | dict[str, float] | None = "ce",
+        aux_heads: list[Any] | None = None,
         aux_loss: dict[str, float] | None = None,
         class_weights: list[float] | None = None,
         ignore_index: int | None = None,
         lr: float = 0.001,
-        # the following are optional so CLI doesnt need to pass them
         optimizer: str | None = None,
         optimizer_hparams: dict | None = None,
         scheduler: str | None = None,
         scheduler_hparams: dict | None = None,
-        freeze_backbone: bool = False,  # noqa: FBT001, FBT002
-        freeze_decoder: bool = False,  # noqa: FBT002, FBT001
+        freeze_backbone: bool = False,
+        freeze_decoder: bool = False,
         freeze_head: bool = False,
         plot_on_val: bool | int = 10,
         class_names: list[str] | None = None,
-        tiled_inference_parameters: dict = None,
+        tiled_inference_parameters: dict | None = None,
         test_dataloaders_names: list[str] | None = None,
         lr_overrides: dict[str, float] | None = None,
         output_on_inference: str | list[str] = "prediction",
         output_most_probable: bool = True,
-        path_to_record_metrics: str = None,
+        path_to_record_metrics: str | None = None,
         tiled_inference_on_testing: bool = False,
         tiled_inference_on_validation: bool = False,
     ) -> None:
         """Constructor
 
         Args:
-            Defaults to None.
             model_args (Dict): Arguments passed to the model factory.
             model_factory (str, optional): ModelFactory class to be used to instantiate the model.
                 Is ignored when model is provided.
             model (torch.nn.Module, optional): Custom model.
-            loss (str, optional): Loss to be used. Currently, supports 'ce', 'jaccard' or 'focal' loss.
-                Defaults to "ce".
+            loss (str | list[str] | dict[str, float], optional): Loss to be used. Single loss as string.
+                Multiple losses can be provided as list of strings or as dict with float values defining loss weights.
+                Currently, supports 'ce', 'jaccard', 'dice', 'lovasz', or 'focal' loss. Defaults to "ce".
             aux_loss (dict[str, float] | None, optional): Auxiliary loss weights.
                 Should be a dictionary where the key is the name given to the loss
                 and the value is the weight to be applied to that loss.
@@ -105,8 +122,8 @@ class SemanticSegmentationTask(TerraTorchTask):
             freeze_backbone (bool, optional): Whether to freeze the backbone. Defaults to False.
             freeze_decoder (bool, optional): Whether to freeze the decoder. Defaults to False.
             freeze_head (bool, optional): Whether to freeze the segmentation head. Defaults to False.
-            plot_on_val (bool | int, optional): Whether to plot visualizations on validation.
-            If true, log every epoch. Defaults to 10. If int, will plot every plot_on_val epochs.
+            plot_on_val (bool | int, optional): Whether to plot visualizations on validation and in test.
+                If true, log every epoch. Defaults to 10. If int, will plot every plot_on_val epochs.
             class_names (list[str] | None, optional): List of class names passed to metrics for better naming.
                 Defaults to numeric ordering.
             tiled_inference_parameters (dict | None, optional): Inference parameters
@@ -123,12 +140,13 @@ class SemanticSegmentationTask(TerraTorchTask):
                 This argument has been deprecated and will be replaced with `output_on_inference`.
             tiled_inference_on_testing (bool): A boolean to define if tiled inference will be used during the test step.
             tiled_inference_on_validation (bool): A boolean to define if tiled inference will be used during the val step.
-            path_to_record_metrics (str): A path to save the file containing the metrics log. 
+            path_to_record_metrics (str): A path to save the file containing the metrics log.
         """
 
         self.tiled_inference_parameters = tiled_inference_parameters
         self.aux_loss = aux_loss
         self.aux_heads = aux_heads
+        self.model_args = model_args
 
         if model is not None and model_factory is not None:
             logger.warning("A model_factory and a model was provided. The model_factory is ignored.")
@@ -143,6 +161,7 @@ class SemanticSegmentationTask(TerraTorchTask):
             tiled_inference_on_testing=tiled_inference_on_testing,
             tiled_inference_on_validation=tiled_inference_on_validation,
             path_to_record_metrics=path_to_record_metrics,
+            plot_on_val=plot_on_val,
         )
 
         if model is not None:
@@ -155,7 +174,6 @@ class SemanticSegmentationTask(TerraTorchTask):
             self.test_loss_handler.append(LossHandler(metrics.prefix))
         self.val_loss_handler = LossHandler(self.val_metrics.prefix)
         self.monitor = f"{self.val_metrics.prefix}loss"
-        self.plot_on_val = int(plot_on_val)
         self.output_on_inference = output_on_inference
 
         # When the user decides to use `output_most_probable` as `False` in
@@ -211,31 +229,32 @@ class SemanticSegmentationTask(TerraTorchTask):
         Raises:
             ValueError: If *loss* is invalid.
         """
-        loss: str = self.hparams["loss"]
+        loss = self.hparams["loss"]
         ignore_index = self.hparams["ignore_index"]
 
         class_weights = (
             torch.Tensor(self.hparams["class_weights"]) if self.hparams["class_weights"] is not None else None
         )
-        if loss == "ce":
-            ignore_value = -100 if ignore_index is None else ignore_index
-            self.criterion = nn.CrossEntropyLoss(ignore_index=ignore_value, weight=class_weights)
-        elif loss == "jaccard":
-            if ignore_index is not None:
-                exception_message = (
-                    f"Jaccard loss does not support ignore_index, but found non-None value of {ignore_index}."
-                )
-                raise RuntimeError(exception_message)
-            self.criterion = smp.losses.JaccardLoss(mode="multiclass")
-        elif loss == "focal":
-            self.criterion = smp.losses.FocalLoss("multiclass", ignore_index=ignore_index, normalized=True)
-        elif loss == "dice":
-            self.criterion = smp.losses.DiceLoss("multiclass", ignore_index=ignore_index)
+
+        if isinstance(loss, str):
+            # Single loss
+            self.criterion = init_loss(loss, ignore_index=ignore_index, class_weights=class_weights)
+        elif isinstance(loss, nn.Module):
+            # Custom loss
+            self.criterion = loss
+        elif isinstance(loss, list):
+            # List of losses with equal weights
+            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights) for loss in loss}
+            self.criterion = CombinedLoss(losses=losses)
+        elif isinstance(loss, dict):
+            # Equal weighting of losses
+            loss, weight = list(loss.keys()), list(loss.values())
+            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights) for loss in loss}
+            self.criterion = CombinedLoss(losses=losses, weight=weight)
         else:
-            exception_message = (
-                f"Loss type '{loss}' is not valid. Currently, supports 'ce', 'jaccard', 'dice' or 'focal' loss."
+            raise ValueError(
+                f"The loss type {loss} isn't supported. Provide loss as string, list, or dict[name, weights]."
             )
-            raise ValueError(exception_message)
 
     def configure_metrics(self) -> None:
         """Initialize the performance metrics."""
@@ -268,6 +287,13 @@ class SemanticSegmentationTask(TerraTorchTask):
                     num_classes=num_classes,
                     ignore_index=ignore_index,
                     average="micro",
+                ),
+                "Boundary_mIoU": BoundaryMeanIoU(
+                    num_classes=num_classes,
+                    thickness=2,
+                    ignore_index=ignore_index,
+                    average="macro",
+                    include_background=False,
                 ),
                 "IoU": ClasswiseWrapper(
                     MulticlassJaccardIndex(num_classes=num_classes, ignore_index=ignore_index, average=None),
@@ -346,6 +372,10 @@ class SemanticSegmentationTask(TerraTorchTask):
 
         self.record_metrics(dataloader_idx, y_hat_hard, y)
 
+        if self._do_plot_samples(batch_idx):
+            batch["prediction"] = y_hat_hard
+            self.plot_sample(batch, batch_idx)
+
     def validation_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> None:
         """Compute the validation loss and additional metrics.
         Args:
@@ -366,32 +396,8 @@ class SemanticSegmentationTask(TerraTorchTask):
         self.val_metrics.update(y_hat_hard, y)
 
         if self._do_plot_samples(batch_idx):
-            try:
-                datamodule = self.trainer.datamodule
-                batch["prediction"] = y_hat_hard
-
-                if isinstance(batch["image"], dict):
-                    rgb_modality = getattr(datamodule, "rgb_modality", None) or list(batch["image"].keys())[0]
-                    batch["image"] = batch["image"][rgb_modality]
-
-                for key in ["image", "mask", "prediction"]:
-                    batch[key] = batch[key].cpu()
-                sample = unbind_samples(batch)[0]
-                fig = datamodule.val_dataset.plot(sample) if hasattr(datamodule.val_dataset, "plot") else datamodule.plot(sample, "val") 
-                if fig:
-                    summary_writer = self.logger.experiment
-                    if hasattr(summary_writer, "add_figure"):
-                        summary_writer.add_figure(f"image/{batch_idx}", fig, global_step=self.global_step)
-                    elif hasattr(summary_writer, "log_figure"):
-                        summary_writer.log_figure(
-                            self.logger.run_id, fig, f"epoch_{self.current_epoch}_{batch_idx}.png"
-                        )
-                    else:
-                        plt.savefig("/mnt/geobench/data/geobench_experiments/final_again/test_plots")
-            except ValueError:
-                pass
-            finally:
-                plt.close()
+            batch["prediction"] = y_hat_hard
+            self.plot_sample(batch, batch_idx)
 
     def predict_step(self, batch: Any, batch_idx: int, dataloader_idx: int = 0) -> Tensor:
         """Compute the predicted class probabilities.

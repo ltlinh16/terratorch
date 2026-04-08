@@ -466,20 +466,20 @@ class StateDictAwareModelCheckpoint(ModelCheckpoint):
             save_top_k = 1
 
         super().__init__(
-            dirpath,
-            filename,
-            monitor,
-            verbose,
-            save_last,
-            save_top_k,
-            save_weights_only,
-            mode,
-            auto_insert_metric_name,
-            every_n_train_steps,
-            train_time_interval,
-            every_n_epochs,
-            save_on_train_epoch_end,
-            enable_version_counter,
+            dirpath=dirpath,
+            filename=filename,
+            monitor=monitor,
+            verbose=verbose,
+            save_last=save_last,
+            save_top_k=save_top_k,
+            save_weights_only=save_weights_only,
+            mode=mode,
+            auto_insert_metric_name=auto_insert_metric_name,
+            every_n_train_steps=every_n_train_steps,
+            train_time_interval=train_time_interval,
+            every_n_epochs=every_n_epochs,
+            save_on_train_epoch_end=save_on_train_epoch_end,
+            enable_version_counter=enable_version_counter,
         )
 
     @property
@@ -507,7 +507,6 @@ class MyLightningCLI(LightningCLI):
         # enable_checkpointing is True and no checkpointing is included as
         # callback.
         self.config = add_default_checkpointing_config(self.config)
-
         # get the predict_output_dir. Depending on the value of run, it may be in the subcommand
         try:
             config = self.config.predict
@@ -515,13 +514,29 @@ class MyLightningCLI(LightningCLI):
             config = self.config
 
         # Custom modules path
-        if hasattr(self.config, "fit") and hasattr(self.config.fit, "custom_modules_path"):
+        if (
+            hasattr(self.config, "fit")
+            and hasattr(self.config.fit, "custom_modules_path")
+            and (self.config.fit.custom_modules_path is not None)
+        ):
             custom_modules_path = self.config.fit.custom_modules_path
-        elif hasattr(self.config, "validate") and hasattr(self.config.validate, "custom_modules_path"):
+        elif (
+            hasattr(self.config, "validate")
+            and hasattr(self.config.validate, "custom_modules_path")
+            and (self.config.validate.custom_modules_path is not None)
+        ):
             custom_modules_path = self.config.validate.custom_modules_path
-        elif hasattr(self.config, "test") and hasattr(self.config.test, "custom_modules_path"):
+        elif (
+            hasattr(self.config, "test")
+            and hasattr(self.config.test, "custom_modules_path")
+            and (self.config.test.custom_modules_path is not None)
+        ):
             custom_modules_path = self.config.test.custom_modules_path
-        elif hasattr(self.config, "predict") and hasattr(self.config.predict, "custom_modules_path"):
+        elif (
+            hasattr(self.config, "predict")
+            and hasattr(self.config.predict, "custom_modules_path")
+            and (self.config.predict.custom_modules_path is not None)
+        ):
             custom_modules_path = self.config.predict.custom_modules_path
         else:
             custom_modules_path = os.getenv("TERRATORCH_CUSTOM_MODULE_PATH", None)
@@ -699,7 +714,7 @@ class LightningInferenceModel:
         )
         return LightningInferenceModel(trainer, task, datamodule, checkpoint_path=checkpoint_path)
 
-    def inference_on_dir(self, data_root: Path | None = None) -> tuple[torch.Tensor, list[str]]:
+    def inference_on_dir(self, data_root: Path | str | None = None) -> tuple[torch.Tensor, list[str]]:
         """Perform inference on the given data root directory
 
         Args:
@@ -710,7 +725,14 @@ class LightningInferenceModel:
         """
 
         if data_root:
-            self.datamodule.predict_root = data_root
+            # Check if datamodule is multimodal (has modalities attribute)
+            # If so, convert string path to dict mapping each modality to the same path
+            if hasattr(self.datamodule, "modalities") and self.datamodule.modalities:
+                # Multimodal datamodule - convert string to dict
+                self.datamodule.predict_root = {m: data_root for m in self.datamodule.modalities}
+            else:
+                # Single-modal datamodule - use string directly
+                self.datamodule.predict_root = data_root
         predictions = self.trainer.predict(model=self.model, datamodule=self.datamodule, return_predictions=True)
 
         # In some cases, the output has the format ((prediction_tensor,

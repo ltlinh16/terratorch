@@ -17,10 +17,10 @@ class PASTISDataModule(NonGeoDataModule):
         data_root: str = "./",
         truncate_image: int | None = None,
         pad_image: int | None = None,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         **kwargs: Any,
     ) -> None:
         """
@@ -30,14 +30,14 @@ class PASTISDataModule(NonGeoDataModule):
             batch_size (int, optional): Batch size for DataLoaders. Defaults to 8.
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             data_root (str, optional): Directory containing the dataset. Defaults to "./".
-            truncate_image (int, optional): Truncate the time dimension of the image to 
+            truncate_image (int, optional): Truncate the time dimension of the image to
                 a specified number of timesteps. If None, no truncation is performed.
-            pad_image (int, optional): Pad the time dimension of the image to a specified 
+            pad_image (int, optional): Pad the time dimension of the image to a specified
                 number of timesteps. If None, no padding is applied.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training data.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation data.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing data.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction data.
+            train_transform (A.Compose | None | list, optional): Transformations for training data.
+            val_transform (A.Compose | None | list, optional): Transformations for validation data.
+            test_transform (A.Compose | None | list, optional): Transformations for testing data.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction data.
             **kwargs: Additional keyword arguments.
         """
         super().__init__(
