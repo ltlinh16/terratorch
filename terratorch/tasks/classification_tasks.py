@@ -82,7 +82,7 @@ class ClassificationTask(TerraTorchTask):
         aux_heads: list[AuxiliaryHead] | None = None,
         aux_loss: dict[str, float] | None = None,
         class_weights: list[float] | None = None,
-        ignore_index: int | None = None,
+        ignore_index: int | None = -100,
         custom_loss: bool = False,
         custom_loss_kwargs: dict = None,
         lr: float = 0.001,
@@ -94,6 +94,7 @@ class ClassificationTask(TerraTorchTask):
         freeze_backbone: bool = False,  # noqa: FBT001, FBT002
         freeze_decoder: bool = False,  # noqa: FBT002, FBT001
         freeze_head: bool = False,  # noqa: FBT002, FBT001
+        plot_on_val: bool | int = False,  # Deactivate for classification to reduce overhead
         class_names: list[str] | None = None,
         test_dataloaders_names: list[str] | None = None,
         lr_overrides: dict[str, float] | None = None,
@@ -114,7 +115,8 @@ class ClassificationTask(TerraTorchTask):
                 and the value is the weight to be applied to that loss.
                 The name of the loss should match the key in the dictionary output by the model's forward
                 method containing that output. Defaults to None.
-            class_weights (Union[list[float], None], optional): List of class weights to be applied to the loss.
+            plot_on_val (bool | int, optional): Whether to plot visualizations on validation and in test.
+                If true, log every epoch. Defaults to False. If int, will plot every plot_on_val epochs.
             class_weights (list[float] | None, optional): List of class weights to be applied to the loss.
                 Defaults to None.
             ignore_index (int | None, optional): Label to ignore in the loss computation. Defaults to None.
@@ -144,6 +146,7 @@ class ClassificationTask(TerraTorchTask):
 
         self.aux_loss = aux_loss
         self.aux_heads = aux_heads
+        self.model_args = model_args
 
         if model is not None and model_factory is not None:
             logger.warning("A model_factory and a model was provided. The model_factory is ignored.")
@@ -153,7 +156,11 @@ class ClassificationTask(TerraTorchTask):
         if model_factory and model is None:
             self.model_factory = MODEL_FACTORY_REGISTRY.build(model_factory)
 
-        super().__init__(task="classification", path_to_record_metrics=path_to_record_metrics)
+        super().__init__(
+            task="classification",
+            path_to_record_metrics=path_to_record_metrics,
+            plot_on_val=plot_on_val,
+        )
 
         if model:
             # Custom model
@@ -324,6 +331,10 @@ class ClassificationTask(TerraTorchTask):
         y_hat_hard = to_class_prediction(model_output)
         self.val_metrics.update(y_hat_hard, y)
 
+        if self._do_plot_samples(batch_idx):
+            batch["prediction"] = y_hat_hard
+            self.plot_sample(batch, batch_idx)
+
     def test_step(self, batch: object, batch_idx: int, dataloader_idx: int = 0) -> None:
         """Compute the test loss and additional metrics.
 
@@ -350,6 +361,10 @@ class ClassificationTask(TerraTorchTask):
         self.test_metrics[dataloader_idx].update(y_hat_hard, y)
 
         self.record_metrics(dataloader_idx, y_hat_hard, y)
+
+        if self._do_plot_samples(batch_idx):
+            batch["prediction"] = y_hat_hard
+            self.plot_sample(batch, batch_idx)
 
     def predict_step(self, batch: object, batch_idx: int, dataloader_idx: int = 0) -> Tensor:
         """Compute the predicted class probabilities.

@@ -6,31 +6,28 @@ This module contains generic data modules for instantiation at runtime.
 
 import logging
 import os
-from collections.abc import Callable, Iterable
+from collections.abc import Callable, Hashable, Iterable
 from pathlib import Path
-from typing import Any
+from typing import Any, Dict, List, Optional
 
 import albumentations as A
 import kornia.augmentation as K
 import numpy as np
+import tacoreader
 import torch
+from albumentations.core.composition import BaseCompose, Compose
 from kornia.augmentation import AugmentationSequential
 from torch import Tensor
 from torch.utils.data import DataLoader
-from torchgeo.datamodules import NonGeoDataModule
+from torchgeo.datamodules import MisconfigurationException, NonGeoDataModule
 
-from terratorch.datamodules.utils import wrap_in_compose_is_list
+from terratorch.datamodules.utils import Normalize, wrap_in_compose_is_list
 from terratorch.datasets import GenericNonGeoPixelwiseRegressionDataset, GenericNonGeoSegmentationDataset, HLSBands
 from terratorch.io.file import load_from_file_or_attribute
 
 from .utils import check_dataset_stackability
 
 logger = logging.getLogger("terratorch")
-
-
-def wrap_in_compose_is_list(transform_list):
-    # set check shapes to false because of the multitemporal case
-    return A.Compose(transform_list, is_check_shapes=False) if isinstance(transform_list, Iterable) else transform_list
 
 
 # def collate_fn_list_dicts(batch):
@@ -46,33 +43,6 @@ def wrap_in_compose_is_list(transform_list):
 #     return batch
 
 
-class Normalize(Callable):
-    def __init__(self, means, stds):
-        super().__init__()
-        self.means = means
-        self.stds = stds
-
-    def __call__(self, batch):
-        # min_value = self.means - 2 * self.stds
-        # max_value = self.means + 2 * self.stds
-        # img = (batch["image"] - min_value) / (max_value - min_value)
-        # img = torch.clip(img, 0, 1)
-        # batch["image"] = img
-        # return batch
-        image = batch["image"]
-        if len(image.shape) == 5:
-            means = torch.tensor(self.means, device=image.device).view(1, -1, 1, 1, 1)
-            stds = torch.tensor(self.stds, device=image.device).view(1, -1, 1, 1, 1)
-        elif len(image.shape) == 4:
-            means = torch.tensor(self.means, device=image.device).view(1, -1, 1, 1)
-            stds = torch.tensor(self.stds, device=image.device).view(1, -1, 1, 1)
-        else:
-            msg = f"Expected batch to have 5 or 4 dimensions, but got {len(image.shape)}"
-            raise Exception(msg)
-        batch["image"] = (image - means) / stds
-        return batch
-
-
 class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
     """
     This is a generic datamodule class for instantiating data modules at runtime.
@@ -83,14 +53,14 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         self,
         batch_size: int,
         num_workers: int,
-        train_data_root: Path,
-        val_data_root: Path,
-        test_data_root: Path,
-        means: list[float] | str,
-        stds: list[float] | str,
         num_classes: int,
+        train_data_root: Path | None = None,
+        val_data_root: Path | None = None,
+        test_data_root: Path | None = None,
         img_grep: str = "*",
         label_grep: str = "*",
+        means: list[float] | str | None = None,
+        stds: list[float] | str | None = None,
         predict_data_root: Path | None = None,
         train_label_data_root: Path | None = None,
         val_label_data_root: Path | None = None,
@@ -106,16 +76,20 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         predict_output_bands: list[HLSBands | int | tuple[int, int] | str] | None = None,
         constant_scale: float = 1,
         rgb_indices: list[int] | None = None,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: list[Any] | None = None,
+        val_transform: list[Any] | None = None,
+        test_transform: list[Any] | None = None,
         expand_temporal_dimension: bool = False,
         reduce_zero_label: bool = False,
         no_data_replace: float | None = None,
         no_label_replace: int | None = None,
+        embedding_input: bool = False,
+        pca_step: int = 4,
         drop_last: bool = True,
         pin_memory: bool = False,
         check_stackability: bool = True,
+        tortilla_file: Path | None = None,
+        return_georeference: bool = False,
         **kwargs: Any,
     ) -> None:
         """Constructor
@@ -172,14 +146,19 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 Defaults to None, which simply applies ToTensorV2().
             no_data_replace (float | None): Replace nan values in input images with this value. If none, does no replacement. Defaults to None.
             no_label_replace (int | None): Replace nan values in label with this value. If none, does no replacement. Defaults to None.
-            expand_temporal_dimension (bool): Go from shape (time*channels, h, w) to (channels, time, h, w).
-                Defaults to False.
+            embedding_input (bool): Whether the input represents embeddings rather than an image, used for plotting. Defaults to False.
+            pca_step (int): Spatial subsampling factor for PCA fitting in embedding visualizations.
+                PCA components are estimated using only every pca_step-th spatial embedding
+                (e.g. pca_step=4 uses 1/4 of embeddings), then applied to all embeddings. Defaults to 4.
             reduce_zero_label (bool): Subtract 1 from all labels. Useful when labels start from 1 instead of the
                 expected 0. Defaults to False.
             drop_last (bool): Drop the last batch if it is not complete. Defaults to True.
             pin_memory (bool): If ``True``, the data loader will copy Tensors
             into device/CUDA pinned memory before returning them. Defaults to False.
             check_stackability (bool): Check if all the files in the dataset has the same size and can be stacked.
+            tortilla_file (Path | None): Path to a tortilla file. If provided, the dataset will be loaded from the tortilla file. Defaults to None.
+            return_georeference (bool): Whether to return georeference metadata info (CRS, Bounds, ...). Defaults to False.
+
         """
         super().__init__(GenericNonGeoSegmentationDataset, batch_size, num_workers, **kwargs)
         self.num_classes = num_classes
@@ -209,8 +188,11 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         self.predict_output_bands = predict_output_bands if predict_output_bands else output_bands
         self.output_bands = output_bands
         self.rgb_indices = rgb_indices
+        self.embedding_input = embedding_input
+        self.pca_step = pca_step
         self.expand_temporal_dimension = expand_temporal_dimension
         self.reduce_zero_label = reduce_zero_label
+        self.return_georeference = return_georeference
 
         self.train_transform = wrap_in_compose_is_list(train_transform)
         self.val_transform = wrap_in_compose_is_list(val_transform)
@@ -220,15 +202,39 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
         #     K.Normalize(means, stds),
         #     data_keys=["image"],
         # )
-        means = load_from_file_or_attribute(means)
-        stds = load_from_file_or_attribute(stds)
+        if means and stds:
+            means = load_from_file_or_attribute(means)
+            stds = load_from_file_or_attribute(stds)
 
-        self.aug = Normalize(means, stds)
+            self.aug = Normalize(means, stds)
+        else:
+            self.aug = lambda x: x
 
         # self.aug = Normalize(means, stds)
         # self.collate_fn = collate_fn_list_dicts
 
         self.check_stackability = check_stackability
+
+        if tortilla_file is not None and any([train_data_root, val_data_root, test_data_root]):
+            raise MisconfigurationException(
+                "Cannot provide both tortilla_file and train_data_root/val_data_root/test_data_root. "
+                "Use tortilla_file OR data roots (not both)."
+            )
+
+        self.tortilla_df = tacoreader.load(str(tortilla_file)) if tortilla_file is not None else None
+
+    def _get_tortilla_indices(self, stage: str) -> list[Hashable] | None:
+        if self.tortilla_df is None:
+            return None
+
+        if stage in ["fit"]:
+            return [i for i, row in self.tortilla_df.iterrows() if row["tortilla:data_split"] == "train"]
+        if stage in ["validate"]:
+            return [i for i, row in self.tortilla_df.iterrows() if row["tortilla:data_split"] == "validation"]
+        if stage in ["test"]:
+            return [i for i, row in self.tortilla_df.iterrows() if row["tortilla:data_split"] == "test"]
+
+        return None
 
     def setup(self, stage: str) -> None:
         if stage in ["fit"]:
@@ -248,8 +254,13 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 transform=self.train_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
+                tortilla_df=self.tortilla_df,
+                tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["fit", "validate"]:
             self.val_dataset = self.dataset_class(
@@ -268,8 +279,13 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 transform=self.val_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
+                tortilla_df=self.tortilla_df,
+                tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["test"]:
             self.test_dataset = self.dataset_class(
@@ -288,8 +304,13 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 transform=self.test_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
+                tortilla_df=self.tortilla_df,
+                tortilla_indices=self._get_tortilla_indices(stage),
+                return_georeference=self.return_georeference,
             )
         if stage in ["predict"] and self.predict_root:
             self.predict_dataset = self.dataset_class(
@@ -304,8 +325,11 @@ class GenericNonGeoSegmentationDataModule(NonGeoDataModule):
                 transform=self.test_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
+                return_georeference=self.return_georeference,
             )
 
     def _dataloader_factory(self, split: str) -> DataLoader[dict[str, Tensor]]:
@@ -352,8 +376,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
         train_data_root: Path,
         val_data_root: Path,
         test_data_root: Path,
-        means: list[float] | str,
-        stds: list[float] | str,
+        means: list[float] | str | None = None,
+        stds: list[float] | str | None = None,
         predict_data_root: Path | None = None,
         img_grep: str | None = "*",
         label_grep: str | None = "*",
@@ -371,13 +395,15 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
         predict_output_bands: list[HLSBands | int | tuple[int, int] | str] | None = None,
         constant_scale: float = 1,
         rgb_indices: list[int] | None = None,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: list[Any] | None = None,
+        val_transform: list[Any] | None = None,
+        test_transform: list[Any] | None = None,
         expand_temporal_dimension: bool = False,
         reduce_zero_label: bool = False,
         no_data_replace: float | None = None,
         no_label_replace: int | None = None,
+        embedding_input: bool = False,
+        pca_step: int = 4,
         drop_last: bool = True,
         pin_memory: bool = False,
         check_stackability: bool = True,
@@ -436,6 +462,10 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
                 Defaults to None, which simply applies ToTensorV2().
             no_data_replace (float | None): Replace nan values in input images with this value. If none, does no replacement. Defaults to None.
             no_label_replace (int | None): Replace nan values in label with this value. If none, does no replacement. Defaults to None.
+            embedding_input (bool): Whether the input represents embeddings rather than an image, used for plotting. Defaults to False.
+            pca_step (int): Spatial subsampling factor for PCA fitting in embedding visualizations.
+                PCA components are estimated using only every pca_step-th spatial embedding
+                (e.g. pca_step=4 uses 1/4 of embeddings), then applied to all embeddings. Defaults to 4.
             expand_temporal_dimension (bool): Go from shape (time*channels, h, w) to (channels, time, h, w).
                 Defaults to False.
             reduce_zero_label (bool): Subtract 1 from all labels. Useful when labels start from 1 instead of the
@@ -459,6 +489,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
         self.allow_substring_split_file = allow_substring_split_file
         self.drop_last = drop_last
         self.pin_memory = pin_memory
+        self.embedding_input = embedding_input
+        self.pca_step = pca_step
         self.expand_temporal_dimension = expand_temporal_dimension
         self.reduce_zero_label = reduce_zero_label
 
@@ -478,10 +510,13 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
         #     K.Normalize(means, stds),
         #     data_keys=["image"],
         # )
-        means = load_from_file_or_attribute(means)
-        stds = load_from_file_or_attribute(stds)
+        if means and stds:
+            means = load_from_file_or_attribute(means)
+            stds = load_from_file_or_attribute(stds)
 
-        self.aug = Normalize(means, stds)
+            self.aug = Normalize(means, stds)
+        else:
+            self.aug = lambda x: x
         self.no_data_replace = no_data_replace
         self.no_label_replace = no_label_replace
 
@@ -508,6 +543,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
                 transform=self.train_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
             )
@@ -527,6 +564,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
                 transform=self.val_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
             )
@@ -546,6 +585,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
                 transform=self.test_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
             )
@@ -562,6 +603,8 @@ class GenericNonGeoPixelwiseRegressionDataModule(NonGeoDataModule):
                 transform=self.test_transform,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
+                embedding_input=self.embedding_input,
+                pca_step=self.pca_step,
                 expand_temporal_dimension=self.expand_temporal_dimension,
                 reduce_zero_label=self.reduce_zero_label,
             )

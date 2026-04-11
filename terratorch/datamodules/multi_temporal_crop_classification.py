@@ -38,10 +38,10 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
         batch_size: int = 4,
         num_workers: int = 0,
         bands: Sequence[str] = MultiTemporalCropClassification.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: list[Any] | None = None,
+        val_transform: list[Any] | None = None,
+        test_transform: list[Any] | None = None,
+        predict_transform: A.Compose | None | list = None,
         drop_last: bool = True,
         no_data_replace: float | None = 0,
         no_label_replace: int | None = -1,
@@ -59,10 +59,10 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
             batch_size (int, optional): Batch size for DataLoaders. Defaults to 4.
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             bands (Sequence[str], optional): List of bands to use. Defaults to MultiTemporalCropClassification.all_band_names.
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training data.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation data.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing data.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction data.
+            train_transform (A.Compose | None | list, optional): Transformations for training data.
+            val_transform (A.Compose | None | list, optional): Transformations for validation data.
+            test_transform (A.Compose | None | list, optional): Transformations for testing data.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction data.
             drop_last (bool, optional): Whether to drop the last incomplete batch during training. Defaults to True.
             no_data_replace (float | None, optional): Replacement value for missing data. Defaults to 0.
             no_label_replace (int | None, optional): Replacement value for missing labels. Defaults to -1.
@@ -106,8 +106,8 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
                 bands=self.bands,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
-                expand_temporal_dimension = self.expand_temporal_dimension,
-                reduce_zero_label = self.reduce_zero_label,
+                expand_temporal_dimension=self.expand_temporal_dimension,
+                reduce_zero_label=self.reduce_zero_label,
                 use_metadata=self.use_metadata,
                 metadata_file_name=self.metadata_file_name,
             )
@@ -119,8 +119,8 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
                 bands=self.bands,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
-                expand_temporal_dimension = self.expand_temporal_dimension,
-                reduce_zero_label = self.reduce_zero_label,
+                expand_temporal_dimension=self.expand_temporal_dimension,
+                reduce_zero_label=self.reduce_zero_label,
                 use_metadata=self.use_metadata,
                 metadata_file_name=self.metadata_file_name,
             )
@@ -132,8 +132,8 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
                 bands=self.bands,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
-                expand_temporal_dimension = self.expand_temporal_dimension,
-                reduce_zero_label = self.reduce_zero_label,
+                expand_temporal_dimension=self.expand_temporal_dimension,
+                reduce_zero_label=self.reduce_zero_label,
                 use_metadata=self.use_metadata,
                 metadata_file_name=self.metadata_file_name,
             )
@@ -145,8 +145,8 @@ class MultiTemporalCropClassificationDataModule(NonGeoDataModule):
                 bands=self.bands,
                 no_data_replace=self.no_data_replace,
                 no_label_replace=self.no_label_replace,
-                expand_temporal_dimension = self.expand_temporal_dimension,
-                reduce_zero_label = self.reduce_zero_label,
+                expand_temporal_dimension=self.expand_temporal_dimension,
+                reduce_zero_label=self.reduce_zero_label,
                 use_metadata=self.use_metadata,
                 metadata_file_name=self.metadata_file_name,
             )

@@ -16,8 +16,7 @@ from torchmetrics.wrappers import ClasswiseWrapper
 
 from terratorch.models.model import ModelOutput
 from terratorch.tasks import ClassificationTask
-from terratorch.tasks.loss_handler import LossHandler, CombinedLoss
-from terratorch.tasks.utils import _instantiate_from_path
+from terratorch.tasks.loss_handler import CombinedLoss, LossHandler
 
 
 # from geobench
@@ -53,14 +52,16 @@ def init_loss(
     elif loss == "ce":
         return nn.CrossEntropyLoss(ignore_index=ignore_index, weight=class_weights)
     elif loss == "bce":
-        return  nn.BCEWithLogitsLoss()
+        return nn.BCEWithLogitsLoss()
     elif loss == "jaccard":
-        return  JaccardLoss(mode="multiclass")
+        return JaccardLoss(mode="multiclass")
     elif loss == "focal":
-        return  FocalLoss(mode="multiclass", normalized=True)
+        return FocalLoss(mode="multiclass", normalized=True)
     else:
-        raise ValueError(f"Loss type '{loss}' is not valid. Only 'bce', 'balanced_bce', 'ce', 'bce', 'jaccard', or "
-                         f"'focal' supported.")
+        raise ValueError(
+            f"Loss type '{loss}' is not valid. Only 'bce', 'balanced_bce', 'ce', 'bce', 'jaccard', or "
+            f"'focal' supported."
+        )
 
 
 class MultiLabelClassificationTask(ClassificationTask):
@@ -88,36 +89,17 @@ class MultiLabelClassificationTask(ClassificationTask):
             self.criterion = loss
         elif isinstance(loss, list):
             # List of losses with equal weights
-            losses = {
-                loss: init_loss(
-                    loss,
-                    ignore_index=ignore_index,
-                    custom_loss=custom_loss,
-                    custom_loss_kwargs=custom_loss_kwargs,
-                    class_weights=class_weights,
-                )
-                for loss in loss
-            }
+            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights) for loss in loss}
             self.criterion = CombinedLoss(losses=losses)
         elif isinstance(loss, dict):
             # Equal weighting of losses
             loss, weight = list(loss.keys()), list(loss.values())
-            losses = {
-                loss: init_loss(
-                    loss,
-                    ignore_index=ignore_index,
-                    custom_loss=custom_loss,
-                    custom_loss_kwargs=custom_loss_kwargs,
-                    class_weights=class_weights,
-                )
-                for loss in loss
-            }
+            losses = {loss: init_loss(loss, ignore_index=ignore_index, class_weights=class_weights) for loss in loss}
             self.criterion = CombinedLoss(losses=losses, weight=weight)
         else:
             raise ValueError(
                 f"The loss type {loss} isn't supported. Provide loss as string, list, or dict[name, weights]."
             )
-
 
     def configure_metrics(self) -> None:
         """Initialize the performance metrics."""
@@ -215,6 +197,10 @@ class MultiLabelClassificationTask(ClassificationTask):
         y_hat = self.to_multilabel_prediction(model_output)
         self.val_metrics.update(y_hat, y.to(torch.int32))
 
+        if self._do_plot_samples(batch_idx):
+            batch["prediction"] = y_hat
+            self.plot_sample(batch, batch_idx)
+
     def test_step(self, batch: object, batch_idx: int, dataloader_idx: int = 0) -> None:
         x = batch["image"]
         y = batch["label"].to(torch.float32)
@@ -232,6 +218,10 @@ class MultiLabelClassificationTask(ClassificationTask):
         )
         y_hat = self.to_multilabel_prediction(model_output)
         self.test_metrics[dataloader_idx].update(y_hat, y.to(torch.int32))
+
+        if self._do_plot_samples(batch_idx):
+            batch["prediction"] = y_hat
+            self.plot_sample(batch, batch_idx)
 
     def predict_step(self, batch: object, batch_idx: int, dataloader_idx: int = 0) -> Tensor:
         """Compute the predicted class probabilities.

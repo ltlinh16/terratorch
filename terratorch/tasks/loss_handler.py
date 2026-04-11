@@ -1,8 +1,8 @@
+from collections.abc import Callable
 
 import torch
-import torch.nn as nn
-from torch import Tensor
-from collections.abc import Callable
+from torch import Tensor, nn
+
 from terratorch.models.model import ModelOutput
 
 
@@ -54,6 +54,7 @@ class LossHandler:
             return criterion(embeddings, model_output.output, ground_truth)
 
         # Standard Loss Handling
+
         loss = self._compute_loss(model_output.output, ground_truth, criterion)
         if isinstance(loss, Tensor):
             loss = {"loss": loss}

@@ -1,5 +1,7 @@
 # Copyright contributors to the Terratorch project
 
+import logging
+
 from terratorch.datamodules.era5 import ERA5DataModule
 from terratorch.datamodules.fire_scars import FireScarsNonGeoDataModule
 from terratorch.datamodules.generic_pixel_wise_data_module import (
@@ -28,7 +30,6 @@ from terratorch.datamodules.m_so2sat import MSo2SatNonGeoDataModule
 from terratorch.datamodules.multi_temporal_crop_classification import MultiTemporalCropClassificationDataModule
 from terratorch.datamodules.open_sentinel_map import OpenSentinelMapDataModule
 from terratorch.datamodules.pastis import PASTISDataModule
-import logging
 
 try:
     wxc_present = True
@@ -75,17 +76,17 @@ try:
 except ImportError:
     pass
 
-__all__ = (
+__all__ = [
     "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoPixelwiseRegressionDataModule",
-    "GenericNonGeoSegmentationDataModule",
     "GenericNonGeoClassificationDataModule",
     # "GenericNonGeoRegressionDataModule",
     "BurnIntensityNonGeoDataModule",
     "CarbonFluxNonGeoDataModule",
     "Landslide4SenseNonGeoDataModule",
     "ForestNetNonGeoDataModule",
-    "BioMasstersNonGeoDataModuleSen1Floods11NonGeoDataModule",
+    "BioMasstersNonGeoDataModule",
+    "Sen1Floods11NonGeoDataModule",
     "Sen4MapLucasDataModule",
     "FireScarsNonGeoDataModule",
     "MultiTemporalCropClassificationDataModule",
@@ -103,24 +104,25 @@ __all__ = (
     "MPv4gerSegNonGeoDataModule",
     "MSACropTypeNonGeoDataModule",
     "MNeonTreeNonGeoDataModule",
-    "OpenEarthMapModuleOpenSentinelMapDataModule",
+    "OpenEarthMapNonGeoDataModule",
+    "OpenSentinelMapDataModule",
     "PASTISDataModule",
     "Sen4AgriNetDataModule",
     "GenericMultiModalDataModule",
     "mVHR10DataModule",
     "SubstationDataModule",
     "HelioNetCDFDataModule",
-)
+]
 
 if wxc_present:
-    __all__.__add__(("Merra2DownscaleNonGeoDataModule",))
+    __all__.append("Merra2DownscaleNonGeoDataModule")
 
 
 if geobench_v2_present:
-    __all__.__add__(
-        (
-            "GeoBenchV2SegmentationDataModule",
-            "GeoBenchV2ObjectDetectionDataModule",
+    __all__.extend(
+        [
             "GeoBenchV2ClassificationDataModule",
-        )
+            "GeoBenchV2ObjectDetectionDataModule",
+            "GeoBenchV2SegmentationDataModule",
+        ]
     )

@@ -26,6 +26,7 @@ class RegressionHead(nn.Module):
     def __init__(
         self,
         in_channels: int,
+        num_outputs: int = 1,
         final_act: nn.Module | str | None = None,
         learned_upscale_layers: int = 0,
         channel_list: list[int] | None = None,
@@ -36,6 +37,7 @@ class RegressionHead(nn.Module):
 
         Args:
             in_channels (int): Number of input channels
+            num_outputs (int): Number of predicted regression variables. Defaults to single regression.
             final_act (nn.Module | None, optional): Final activation to be applied. Defaults to None.
             learned_upscale_layers (int, optional): Number of Pixelshuffle layers to create. Each upscales 2x.
                 Defaults to 0.
@@ -46,13 +48,16 @@ class RegressionHead(nn.Module):
 
         """
         super().__init__()
+
         self.learned_upscale_layers = learned_upscale_layers
         self.final_act = final_act if final_act else nn.Identity()
+
         if isinstance(final_act, str):
             module_name, class_name = final_act.rsplit(".", 1)
             target_class = getattr(importlib.import_module(module_name), class_name)
             self.final_act = target_class()
         pre_layers = []
+
         if learned_upscale_layers != 0:
             learned_upscale = nn.Sequential(
                 *[PixelShuffleUpscale(in_channels) for _ in range(self.learned_upscale_layers)]
@@ -61,6 +66,7 @@ class RegressionHead(nn.Module):
 
         if channel_list is None:
             pre_head = nn.Identity()
+
         else:
 
             def block(in_channels, out_channels):
@@ -76,10 +82,13 @@ class RegressionHead(nn.Module):
             )
             in_channels = channel_list[-1]
             pre_layers.append(pre_head)
+
         dropout = nn.Dropout2d(dropout)
-        final_layer = nn.Conv2d(in_channels=in_channels, out_channels=1, kernel_size=1)
+
+        final_layer = nn.Conv2d(in_channels=in_channels, out_channels=num_outputs, kernel_size=1)
         self.head = nn.Sequential(*[*pre_layers, dropout, final_layer])
 
     def forward(self, x):
         output = self.head(x)
+
         return self.final_act(output)

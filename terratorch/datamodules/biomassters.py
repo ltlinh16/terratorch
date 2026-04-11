@@ -2,13 +2,13 @@ from collections.abc import Sequence
 from typing import Any
 
 import albumentations as A
+from kornia.augmentation import AugmentationSequential
 from torch.utils.data import DataLoader
+from torchgeo.datamodules import NonGeoDataModule
 
 from terratorch.datamodules.generic_multimodal_data_module import MultimodalNormalize, wrap_in_compose_is_list
 from terratorch.datamodules.generic_pixel_wise_data_module import Normalize
 from terratorch.datasets import BioMasstersNonGeo
-from torchgeo.datamodules import NonGeoDataModule
-from kornia.augmentation import AugmentationSequential
 
 MEANS = {
     "AGBM": 63.4584,
@@ -18,7 +18,7 @@ MEANS = {
         "VV_Desc": 0.08556002,
         "VH_Desc": 0.02795591,
         "RVI_Asc": 0.75507677,
-        "RVI_Desc": 0.6600374
+        "RVI_Desc": 0.6600374,
     },
     "S2": {
         "BLUE": 1633.0802,
@@ -31,8 +31,8 @@ MEANS = {
         "NIR_NARROW": 2685.8281,
         "SWIR_1": 1023.90204,
         "SWIR_2": 696.48755,
-        "CLOUD_PROBABILITY": 21.177078
-    }
+        "CLOUD_PROBABILITY": 21.177078,
+    },
 }
 
 STDS = {
@@ -43,7 +43,7 @@ STDS = {
         "VV_Desc": 0.19260046,
         "VH_Desc": 0.10272296,
         "RVI_Asc": 0.24945821,
-        "RVI_Desc": 0.3590119
+        "RVI_Desc": 0.3590119,
     },
     "S2": {
         "BLUE": 2499.7146,
@@ -56,9 +56,10 @@ STDS = {
         "NIR_NARROW": 2031.7762,
         "SWIR_1": 934.0556,
         "SWIR_2": 759.8444,
-        "CLOUD_PROBABILITY": 49.352486
-    }
+        "CLOUD_PROBABILITY": 49.352486,
+    },
 }
+
 
 class BioMasstersNonGeoDataModule(NonGeoDataModule):
     """NonGeo LightningDataModule implementation for BioMassters datamodule."""
@@ -71,10 +72,10 @@ class BioMasstersNonGeoDataModule(NonGeoDataModule):
         batch_size: int = 4,
         num_workers: int = 0,
         bands: dict[str, Sequence[str]] | Sequence[str] = BioMasstersNonGeo.all_band_names,
-        train_transform: A.Compose | None | list[A.BasicTransform] = None,
-        val_transform: A.Compose | None | list[A.BasicTransform] = None,
-        test_transform: A.Compose | None | list[A.BasicTransform] = None,
-        predict_transform: A.Compose | None | list[A.BasicTransform] = None,
+        train_transform: A.Compose | None | list = None,
+        val_transform: A.Compose | None | list = None,
+        test_transform: A.Compose | None | list = None,
+        predict_transform: A.Compose | None | list = None,
         aug: AugmentationSequential = None,
         drop_last: bool = True,
         sensors: Sequence[str] = ["S1", "S2"],
@@ -97,10 +98,10 @@ class BioMasstersNonGeoDataModule(NonGeoDataModule):
             num_workers (int, optional): Number of workers for data loading. Defaults to 0.
             bands (dict[str, Sequence[str]] | Sequence[str], optional): Band configuration; either a dict mapping sensors to bands or a list for the first sensor.
                 Defaults to BioMasstersNonGeo.all_band_names
-            train_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for training data.
-            val_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for validation data.
-            test_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for testing data.
-            predict_transform (A.Compose | None | list[A.BasicTransform], optional): Transformations for prediction data.
+            train_transform (A.Compose | None | list, optional): Transformations for training data.
+            val_transform (A.Compose | None | list, optional): Transformations for validation data.
+            test_transform (A.Compose | None | list, optional): Transformations for testing data.
+            predict_transform (A.Compose | None | list, optional): Transformations for prediction data.
             aug (AugmentationSequential, optional): Augmentation or normalization to apply. Defaults to normalization if not provided.
             drop_last (bool, optional): Whether to drop the last incomplete batch. Defaults to True.
             sensors (Sequence[str], optional): List of sensors to use (e.g., ["S1", "S2"]). Defaults to ["S1", "S2"].
@@ -240,5 +241,5 @@ class BioMasstersNonGeoDataModule(NonGeoDataModule):
             shuffle=split == "train",
             num_workers=self.num_workers,
             collate_fn=self.collate_fn,
-            drop_last=split =="train" and self.drop_last,
+            drop_last=split == "train" and self.drop_last,
         )
