@@ -233,11 +233,18 @@ class EncoderDecoderFactory(ModelFactory):
 
             to_be_aux_decoders: list[AuxiliaryHeadWithDecoderWithoutInstantiatedHead] = []
             for aux_decoder in aux_decoders:
-                args = aux_decoder.decoder_args if aux_decoder.decoder_args else {}
+                if isinstance(aux_decoder, dict):
+                    aux_decoder_name = aux_decoder.get("name")
+                    aux_decoder_class = aux_decoder.get("decoder")
+                    args = aux_decoder.get("decoder_args", {})
+                else:
+                    aux_decoder_name = getattr(aux_decoder, "name", None)
+                    aux_decoder_class = getattr(aux_decoder, "decoder", None)
+                    args = getattr(aux_decoder, "decoder_args", {})
                 aux_decoder_kwargs, args = extract_prefix_keys(args, "decoder_")
                 aux_head_kwargs, args = extract_prefix_keys(args, "head_")
                 aux_decoder_instance, aux_head_kwargs, aux_decoder_includes_head = _get_decoder_and_head_kwargs(
-                    aux_decoder.decoder,
+                    aux_decoder_class,
                     channel_list,
                     aux_decoder_kwargs,
                     aux_head_kwargs,
@@ -246,7 +253,7 @@ class EncoderDecoderFactory(ModelFactory):
                 )
                 to_be_aux_decoders.append(
                     AuxiliaryHeadWithDecoderWithoutInstantiatedHead(
-                        aux_decoder.name, aux_decoder_instance, aux_head_kwargs, aux_decoder_includes_head
+                        aux_decoder_name, aux_decoder_instance, aux_head_kwargs, aux_decoder_includes_head
                     )
                 )
                 _check_all_args_used(args)

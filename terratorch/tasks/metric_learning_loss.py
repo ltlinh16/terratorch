@@ -150,16 +150,14 @@ class JointLoss(nn.Module):
             self.metric_loss = SupConLoss(tau=metric_loss_temperature, similarity_mode=metric_similarity_mode, label_embedding_path=label_embedding_path)
         elif metric_loss == "nca":
             self.metric_loss = NCALoss(tau=metric_loss_temperature, similarity_mode=metric_similarity_mode, label_embedding_path=label_embedding_path)
+        else:
+            raise ValueError(f"Unknown metric learning loss: {metric_loss}")
         
-                # Classification loss
         if classification_loss == 'ce':
             self.classification_loss = nn.CrossEntropyLoss()
         else:
             raise ValueError(f"Unknown classification loss: {classification_loss}")
-        
-        print(f"Initialized JointLoss for classification with alpha={alpha}, "
-              f"metric_loss_temperature={metric_loss_temperature}, "
-              f"similarity_mode={metric_similarity_mode}, classification_loss={classification_loss}")
+    
         
         self.alpha = alpha
 
